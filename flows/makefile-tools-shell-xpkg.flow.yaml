@@ -1,0 +1,28 @@
+# Axiom flow — composes published nodes into a graph.
+name: makefile-default-goal-command-name
+description: >
+  Run-verified cross-package bridge: makefile-tools GetDefaultGoal resolves a
+  Makefile's default build target; its name is fed into shell-tools
+  ExtractCommandName. Proves GetDefaultGoal's `target_name` composes into a
+  real downstream consumer, across a real deployed flow edge, not just a
+  local preview.
+
+nodes:
+  - alias: goal
+    package: christiangeorgelucas/makefile-tools@0.1.0
+    node: GetDefaultGoal
+    col: 0
+    row: 0
+  - alias: cmdname
+    package: christiangeorgelucas/shell-tools@0.1.0
+    node: ExtractCommandName
+    col: 1
+    row: 0
+
+edges:
+  - from: goal
+    to: cmdname
+    adapter:
+      target_name: command_line
+
+start: goal
