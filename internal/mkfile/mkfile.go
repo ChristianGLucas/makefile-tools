@@ -108,6 +108,12 @@ var (
 	// first so e.g. ":::=" isn't cut short at ":=".
 	reVarOperator = regexp.MustCompile(`^[A-Za-z0-9_.-]+\s*(:::=|::=|:=|\?=|\+=|!=|=)`)
 
+	// reAssignRemainder tests whether text is itself a variable assignment —
+	// used to detect "export VAR := value" / "override VAR OP value" (GNU
+	// Make manual §6.7's own example), where "export"/"override" is a
+	// modifier prefixing a real assignment rather than a bare name-list.
+	reAssignRemainder = regexp.MustCompile(`^[A-Za-z0-9_.-]+\s*(:::=|::=|:=|\?=|\+=|!=|=)\s*.*$`)
+
 	// Double-colon detection on an already-identified rule header line.
 	reDoubleColon = regexp.MustCompile(`^[^:]+::(?:[^=]|$)`)
 )
@@ -263,6 +269,21 @@ func preprocess(rawLines []string) (sanitized []string, comments []Comment, dire
 				continue
 			}
 			directives = append(directives, Directive{Type: directiveType, Arguments: args, LineNumber: startLine})
+			// "export"/"override" are modifier keywords that can PREFIX a real
+			// variable assignment ("export PATH := ...", "override CFLAGS +=
+			// -Wall" — the latter is the GNU Make manual's own §6.7 example),
+			// not just a bare "export VAR1 VAR2" name-list. When the remainder
+			// after the keyword is itself an assignment, still record the
+			// directive above for traceability, but ALSO let checkmake parse
+			// the assignment normally by feeding it just the remainder.
+			if (directiveType == "export" || directiveType == "override") && reAssignRemainder.MatchString(args) {
+				sanitized[i] = args
+				for k := 1; k < consumed; k++ {
+					sanitized[i+k] = ""
+				}
+				i += consumed
+				continue
+			}
 			for k := 0; k < consumed; k++ {
 				sanitized[i+k] = ""
 			}
@@ -423,14 +444,22 @@ func buildTargets(ck ckparser.Makefile, sanitized []string) ([]Target, []string)
 			deps = stripLeadingColon(deps)
 		}
 
-		targets = append(targets, Target{
-			Name:          r.Target,
-			Prerequisites: deps,
-			Recipe:        r.Body,
-			IsDoubleColon: isDouble,
-			IsPatternRule: strings.Contains(r.Target, "%"),
-			LineNumber:    r.LineNumber,
-		})
+		// A rule header may name MULTIPLE targets sharing one prerequisite
+		// list and recipe ("install uninstall: prep" defines two separate
+		// targets, each depending on prep) — GNU Make manual §4.2. Split on
+		// whitespace rather than keeping the joined string as one bogus
+		// target name (the common case, one name, splits into a slice of 1
+		// and is unaffected).
+		for _, name := range strings.Fields(r.Target) {
+			targets = append(targets, Target{
+				Name:          name,
+				Prerequisites: deps,
+				Recipe:        r.Body,
+				IsDoubleColon: isDouble,
+				IsPatternRule: strings.Contains(name, "%"),
+				LineNumber:    r.LineNumber,
+			})
+		}
 	}
 
 	for i := range targets {

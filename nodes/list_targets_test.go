@@ -16,15 +16,17 @@ func TestListTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(got.Targets) != 8 {
-		t.Fatalf("len(Targets) = %d, want 8", len(got.Targets))
+	if len(got.Targets) != 9 {
+		t.Fatalf("len(Targets) = %d, want 9", len(got.Targets))
 	}
 
 	var names []string
 	for _, tg := range got.Targets {
 		names = append(names, tg.Name)
 	}
-	want := []string{"all", "app", "%.o", "long.o", "install uninstall", "lib.a", "lib.a", "clean"}
+	// "install uninstall:" is one rule naming two targets — each gets its
+	// own entry, not one bogus "install uninstall" name.
+	want := []string{"all", "app", "%.o", "long.o", "install", "uninstall", "lib.a", "lib.a", "clean"}
 	if len(names) != len(want) {
 		t.Fatalf("names = %v, want %v", names, want)
 	}

@@ -17,8 +17,8 @@ func TestGetSummary(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if got.TargetCount != 8 {
-		t.Errorf("TargetCount = %d, want 8", got.TargetCount)
+	if got.TargetCount != 9 {
+		t.Errorf("TargetCount = %d, want 9 (install/uninstall split from one rule header)", got.TargetCount)
 	}
 	if got.VariableCount != 10 {
 		t.Errorf("VariableCount = %d, want 10", got.VariableCount)

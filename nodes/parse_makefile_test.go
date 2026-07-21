@@ -17,8 +17,8 @@ func TestParseMakefile(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(got.Targets) != 8 {
-		t.Errorf("len(Targets) = %d, want 8", len(got.Targets))
+	if len(got.Targets) != 9 {
+		t.Errorf("len(Targets) = %d, want 9 (install/uninstall split from one rule header)", len(got.Targets))
 	}
 	if len(got.Variables) != 10 {
 		t.Errorf("len(Variables) = %d, want 10", len(got.Variables))

@@ -87,12 +87,12 @@ func TestParse_KitchenSink_Targets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(p.Targets) != 8 {
+	if len(p.Targets) != 9 {
 		var names []string
 		for _, tg := range p.Targets {
 			names = append(names, tg.Name)
 		}
-		t.Fatalf("expected 8 targets, got %d: %v", len(p.Targets), names)
+		t.Fatalf("expected 9 targets (install/uninstall split from one rule header), got %d: %v", len(p.Targets), names)
 	}
 
 	all := mustTarget(t, p.Targets, "all", 15)
@@ -130,9 +130,19 @@ func TestParse_KitchenSink_Targets(t *testing.T) {
 		t.Errorf("long.o.HelpComments (preceding comment) = %v", long.HelpComments)
 	}
 
-	multi := mustTarget(t, p.Targets, "install uninstall", 28)
-	if len(multi.Prerequisites) != 0 {
-		t.Errorf("install uninstall should have no prerequisites, got %v", multi.Prerequisites)
+	// "install uninstall:" names TWO targets sharing one rule (GNU Make
+	// manual §4.2) — each must appear as its own Target, not one bogus
+	// Target literally named "install uninstall".
+	install := mustTarget(t, p.Targets, "install", 28)
+	if len(install.Prerequisites) != 0 {
+		t.Errorf("install should have no prerequisites, got %v", install.Prerequisites)
+	}
+	if !reflect.DeepEqual(install.Recipe, []string{"@echo install-or-uninstall"}) {
+		t.Errorf("install.Recipe = %v", install.Recipe)
+	}
+	uninstall := mustTarget(t, p.Targets, "uninstall", 28)
+	if !reflect.DeepEqual(uninstall.Recipe, []string{"@echo install-or-uninstall"}) {
+		t.Errorf("uninstall.Recipe = %v (should share install's recipe)", uninstall.Recipe)
 	}
 
 	lib1 := mustTarget(t, p.Targets, "lib.a", 31)
@@ -239,6 +249,155 @@ func TestParse_DefaultGoal_FirstTargetFallback(t *testing.T) {
 	if !p.DefaultGoalFound || p.DefaultGoal != "build" || p.DefaultGoalSource != "first target" {
 		t.Errorf("got goal=%q found=%v source=%q, want build/true/\"first target\"", p.DefaultGoal, p.DefaultGoalFound, p.DefaultGoalSource)
 	}
+}
+
+// TestParse_MultiTargetRule_SplitsIntoSeparateTargets is a regression test
+// for a CRITICAL finding from independent review: a rule naming multiple
+// targets ("install uninstall: prep") was stored as a single bogus Target
+// literally named "install uninstall", breaking lookup-by-name, PHONY
+// flagging, default-goal resolution, and validation. GNU Make manual §4.2:
+// each name is an independent target sharing the prerequisites and recipe.
+func TestParse_MultiTargetRule_SplitsIntoSeparateTargets(t *testing.T) {
+	content := ".PHONY: install uninstall\ninstall uninstall: prep\n\t@echo doing install or uninstall\n\nprep:\n\t@echo prep\n"
+	p, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	install, ok := findTargetForTest(p.Targets, "install")
+	if !ok {
+		t.Fatalf("expected a Target literally named %q, got names %v", "install", targetNames(p.Targets))
+	}
+	if !reflect.DeepEqual(install.Prerequisites, []string{"prep"}) {
+		t.Errorf("install.Prerequisites = %v, want [prep]", install.Prerequisites)
+	}
+	if !install.IsPhony {
+		t.Errorf("install should be phony (declared in .PHONY)")
+	}
+
+	uninstall, ok := findTargetForTest(p.Targets, "uninstall")
+	if !ok {
+		t.Fatalf("expected a Target literally named %q, got names %v", "uninstall", targetNames(p.Targets))
+	}
+	if !uninstall.IsPhony {
+		t.Errorf("uninstall should be phony (declared in .PHONY)")
+	}
+	if !reflect.DeepEqual(uninstall.Prerequisites, install.Prerequisites) {
+		t.Errorf("uninstall should share install's prerequisites: got %v vs %v", uninstall.Prerequisites, install.Prerequisites)
+	}
+
+	for _, bogus := range p.Targets {
+		if bogus.Name == "install uninstall" {
+			t.Fatalf("found the old bogus joined-name target %q — bug regressed", bogus.Name)
+		}
+	}
+
+	if p.DefaultGoal != "install" {
+		t.Errorf("DefaultGoal = %q, want %q (the first split target)", p.DefaultGoal, "install")
+	}
+
+	// No .PHONY-declares-an-undefined-target false positive now that both
+	// split names resolve.
+	for _, iss := range p.Issues {
+		if strings.Contains(iss.Message, "but no rule defines it") {
+			t.Errorf("unexpected false-positive validation issue: %+v", iss)
+		}
+	}
+}
+
+func findTargetForTest(targets []Target, name string) (Target, bool) {
+	for _, t := range targets {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return Target{}, false
+}
+
+func targetNames(targets []Target) []string {
+	var names []string
+	for _, t := range targets {
+		names = append(names, t.Name)
+	}
+	return names
+}
+
+// TestParse_ExportOverride_StillCapturesAssignment is a regression test for
+// a CRITICAL finding from independent review: "export VAR := value" and
+// "override VAR OP value" (GNU Make manual §6.7's own example) were
+// classified purely as directives, silently dropping the assignment from
+// the variable list and from expansion.
+func TestParse_ExportOverride_StillCapturesAssignment(t *testing.T) {
+	content := "export PATH := /usr/local/bin:$(PATH)\nCFLAGS := -O2\noverride CFLAGS += -Wall\ntarget:\n\t@echo $(CFLAGS)\n"
+	p, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	pathVar, ok := findVariableForTest(p.Variables, "PATH")
+	if !ok {
+		t.Fatalf("expected PATH to be captured as a variable despite the 'export' prefix, got %+v", p.Variables)
+	}
+	if pathVar.Operator != ":=" || pathVar.Value != "/usr/local/bin:$(PATH)" {
+		t.Errorf("PATH variable = %+v", pathVar)
+	}
+
+	var cflagsAssignments []Variable
+	for _, v := range p.Variables {
+		if v.Name == "CFLAGS" {
+			cflagsAssignments = append(cflagsAssignments, v)
+		}
+	}
+	if len(cflagsAssignments) != 2 {
+		t.Fatalf("expected 2 CFLAGS assignments (the plain one and the 'override' one), got %d: %+v", len(cflagsAssignments), cflagsAssignments)
+	}
+	if cflagsAssignments[1].Operator != "+=" || cflagsAssignments[1].Value != "-Wall" {
+		t.Errorf("the 'override' CFLAGS assignment = %+v, want operator=+= value=-Wall", cflagsAssignments[1])
+	}
+
+	// The directive itself must still be reported too (traceability).
+	foundExportDirective := false
+	foundOverrideDirective := false
+	for _, d := range p.Directives {
+		if d.Type == "export" {
+			foundExportDirective = true
+		}
+		if d.Type == "override" {
+			foundOverrideDirective = true
+		}
+	}
+	if !foundExportDirective || !foundOverrideDirective {
+		t.Errorf("expected both 'export' and 'override' directives still reported, got %+v", p.Directives)
+	}
+}
+
+// TestParse_ExportBareNameList_StaysDirectiveOnly confirms the fix above
+// doesn't over-fire: a bare "export VAR1 VAR2" (no assignment, just marking
+// already-defined variables for sub-make export) must NOT be misread as an
+// assignment.
+func TestParse_ExportBareNameList_StaysDirectiveOnly(t *testing.T) {
+	content := "FOO = 1\nexport FOO BAR\nall:\n\t@echo hi\n"
+	p, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, v := range p.Variables {
+		if v.Name == "BAR" {
+			t.Fatalf("bare 'export FOO BAR' must not synthesize a BAR assignment, got %+v", p.Variables)
+		}
+	}
+	if len(p.Variables) != 1 || p.Variables[0].Name != "FOO" {
+		t.Errorf("expected only the original FOO assignment, got %+v", p.Variables)
+	}
+}
+
+func findVariableForTest(vars []Variable, name string) (Variable, bool) {
+	for _, v := range vars {
+		if v.Name == name {
+			return v, true
+		}
+	}
+	return Variable{}, false
 }
 
 func TestParse_DefineEndef_DoesNotLeakAsTargetOrVariable(t *testing.T) {
