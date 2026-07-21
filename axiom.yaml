@@ -1,0 +1,186 @@
+name: christiangeorgelucas/makefile-tools
+version: 0.1.0
+language: go
+description: >-
+  Deterministic parsing and structural inspection of GNU/BSD Makefiles.
+  Core rule and variable tokenizing is delegated to
+  github.com/checkmake/checkmake/parser (MIT, the hand-rolled tokenizer
+  behind the checkmake Makefile linter); this package adds backslash-
+  continuation joining, comment/directive extraction, exact assignment-
+  operator capture, double-colon and pattern-rule detection, .DEFAULT_GOAL
+  resolution, cycle-safe variable expansion, dependency-graph/build-order
+  derivation, and structural validation on top — plus two verified fixes to
+  checkmake's own output (an off-by-one in reported variable line numbers,
+  and a spurious leading ":" dependency on double-colon rules). The Makefile
+  is always supplied as text by the caller: no shell execution, no `make`
+  invocation, no filesystem access, no network, no wall-clock, no
+  randomness — pure static parsing, bounded to 2 MiB / 50,000 lines, with
+  recursive/cyclic variable expansion detected and reported rather than
+  looped. Covers the inspection surface broadly: full structured parse,
+  target/prerequisite/recipe extraction, variable listing with exact
+  assignment operators, static expansion with cycle detection, PHONY and
+  default-goal detection, pattern and double-colon rule extraction, the
+  target dependency graph with topological build order and cycle detection,
+  include-directive listing, target help/documentation extraction (the
+  "## text" convention), summary counts, and structural validation with
+  line numbers. A malformed or oversized Makefile always yields a
+  structured result or error, never a crash.
+license: MIT
+author: Christian George Lucas
+tags:
+  - makefile
+  - make
+  - gnu-make
+  - build-tools
+  - devops
+  - parsing
+  - static-analysis
+  - ci-cd
+  - checkmake
+nodes:
+    - name: ParseMakefile
+      input: MakefileInput
+      output: ParsedMakefile
+      description: >-
+        Parse a Makefile's full text into its complete structured
+        representation: every target with its prerequisites, recipe, and
+        PHONY / double-colon / pattern-rule flags; every variable
+        assignment with its exact operator (=, :=, ?=, +=, !=, ::=, :::=);
+        every comment and directive; the PHONY set; the default goal; and a
+        line-numbered list of structural issues found along the way. This
+        is the general-purpose result every other node in this package is
+        a specialized view of.
+    - name: ListTargets
+      input: MakefileInput
+      output: TargetList
+      description: >-
+        List every target defined in a Makefile, in source order, each with
+        its prerequisites, recipe, and PHONY / double-colon / pattern-rule
+        flags.
+    - name: GetTargetPrerequisites
+      input: TargetQuery
+      output: TargetPrerequisites
+      description: >-
+        Extract one named target's prerequisite (dependency) list. found is
+        false when no rule defines that target name.
+    - name: GetTargetRecipe
+      input: TargetQuery
+      output: TargetRecipe
+      description: >-
+        Extract one named target's recipe: its raw, unexpanded command
+        lines in source order (including an inline "target: deps ; recipe"
+        command). found is false when no rule defines that target name.
+        Recipe text is never executed or shell-parsed — it is returned
+        exactly as written.
+    - name: ListVariables
+      input: MakefileInput
+      output: VariableList
+      description: >-
+        List every variable assignment in a Makefile, in source order:
+        name, raw unexpanded value, and the exact assignment operator used
+        (=, :=, ?=, +=, !=, ::=, :::=). Every assignment line is listed
+        individually (e.g. two "+=" lines for the same name produce two
+        entries) — this is a source listing, not a merged effective value.
+    - name: ExpandVariable
+      input: VariableQuery
+      output: ExpandedVariable
+      description: >-
+        Resolve one variable's simple $(VAR)/${VAR} references against the
+        file's own other assignments. Pure and static: no shell, no
+        environment, no built-in Make functions or automatic variables ($@,
+        $<, ...) are evaluated. A reference cycle (A=$(B), B=$(A)) is
+        detected and reported via cycle_detected/cycle_path rather than
+        looped; an unresolvable reference is reported via
+        unresolved_references rather than guessed at.
+    - name: ListPhonyTargets
+      input: MakefileInput
+      output: PhonyTargetList
+      description: >-
+        List every target name declared via one or more ".PHONY:" lines,
+        deduplicated and sorted. Names may include targets with no rule of
+        their own (a common defensive pattern), and are not filtered
+        against the file's actual rule set.
+    - name: GetDefaultGoal
+      input: MakefileInput
+      output: DefaultGoal
+      description: >-
+        Identify the target `make` would build with no arguments: the value
+        of a ".DEFAULT_GOAL" variable assignment if one is present and
+        non-empty, otherwise the first ordinary (non-special, non-pattern)
+        target defined in the file, per GNU Make's own rule. found is false
+        when neither exists.
+    - name: ListPatternRules
+      input: MakefileInput
+      output: PatternRuleList
+      description: >-
+        List every static pattern rule — a target whose name contains "%",
+        e.g. "%.o: %.c" — in source order, with its prerequisite pattern(s)
+        and recipe.
+    - name: ListDoubleColonRules
+      input: MakefileInput
+      output: DoubleColonRuleList
+      description: >-
+        List every rule declared with "::" instead of ":". Double-colon
+        rules let multiple independent rules build the same target, each
+        running when its own prerequisites are newer — a distinct GNU Make
+        feature from an ordinary single-colon rule with multiple
+        prerequisites.
+    - name: GetDependencyGraph
+      input: MakefileInput
+      output: DependencyGraph
+      description: >-
+        Extract the target-to-target dependency graph for build-order
+        analysis: each target's prerequisites that are themselves targets
+        in the file (plain source-file prerequisites are excluded — they
+        have no build step to sequence), plus a topologically sorted build
+        order. If the graph has a cycle, has_cycle is true, build_order is
+        empty, and cycle_targets names the targets involved — never an
+        infinite loop.
+    - name: ListIncludes
+      input: MakefileInput
+      output: IncludeList
+      description: >-
+        List every "include" / "-include" / "sinclude" directive, in
+        source order, with its raw (unexpanded, un-globbed) path expression
+        and whether it is the "optional" form ("-include"/"sinclude": a
+        missing file is silently ignored rather than an error). Directives
+        are reported only — never fetched, globbed, or read; this node
+        never touches the filesystem or network.
+    - name: GetTargetHelp
+      input: TargetQuery
+      output: TargetHelp
+      description: >-
+        Extract the documentation associated with one named target: a
+        trailing "## help text" comment on its own rule line, and/or a
+        comment block directly above it (no blank line in between) — the
+        two conventions self-documenting Makefiles use for `make help`.
+        found is false when no rule defines that target name.
+    - name: ListTargetHelp
+      input: MakefileInput
+      output: TargetHelpList
+      description: >-
+        List the documentation comments associated with every target that
+        has any — trailing "## help text" and/or a directly-preceding
+        comment block — in source order. Targets with no associated
+        comment are omitted, matching the common "grep for ## and print"
+        self-documenting Makefile convention.
+    - name: GetSummary
+      input: MakefileInput
+      output: MakefileSummary
+      description: >-
+        Count a Makefile's targets, variables, PHONY declarations, pattern
+        rules, double-colon rules, comments, directives, and source lines —
+        a quick shape check before deciding which detailed node to call.
+    - name: ValidateMakefile
+      input: MakefileInput
+      output: ValidationResult
+      description: >-
+        Check basic structural correctness and report issues with 1-based
+        line numbers: recipe lines indented with spaces instead of a
+        literal tab (GNU Make's most common "missing separator" gotcha), a
+        ".PHONY" entry with no matching rule, more than one single-colon
+        rule for the same target (only the last recipe wins), and an
+        unterminated "define"/"endef" block. valid is true iff no
+        "error"-severity issue was found. This never executes anything and
+        cannot detect issues only GNU Make itself would catch (a missing
+        included file, an undefined function, a shell syntax error).

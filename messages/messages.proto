@@ -1,0 +1,226 @@
+// This file defines the data contracts (messages) for your Axiom package.
+// Every node's --input and --output refers to a message defined here.
+//
+// Run `axiom create message <Name>` to scaffold a new message below.
+// Run `axiom generate` to compile these definitions into language bindings in gen/.
+//
+// DOCUMENTATION
+//   Comments written directly above a message or field declaration are extracted
+//   automatically at publish time and shown in the Axiom registry as documentation.
+//   Write your descriptions there — no separate doc files needed.
+//
+//   Leading comment  (no blank line before the declaration) → registry description ✓
+//   Detached comment (blank line before the declaration)    → ignored by registry  ✗
+//
+// This file is yours to edit. Axiom only appends new message blocks — it never
+// overwrites or removes content you have written.
+
+syntax = "proto3";
+
+package christiangeorgelucas.makefile_tools;
+
+option go_package = ".;gen";
+
+// Input shared by every whole-file node: the full raw text of one GNU/BSD
+// Makefile. Never a file path — the caller always supplies the content
+// inline. Nothing is executed, fetched, or read from disk.
+message MakefileInput {
+  string content = 1;
+  // Optional, purely cosmetic label used in validation-issue messages
+  // (e.g. "Makefile"). Never used for filesystem access.
+  string filename = 2;
+}
+
+// Input for a node that inspects one named target within a Makefile.
+message TargetQuery {
+  string content = 1;
+  string target_name = 2;
+}
+
+// Input for a node that inspects one named variable within a Makefile.
+message VariableQuery {
+  string content = 1;
+  string variable_name = 2;
+}
+
+// One rule: a target, its prerequisites, and its recipe.
+message Target {
+  string name = 1;
+  repeated string prerequisites = 2;
+  // Raw, unexpanded recipe command lines, one per source line, in order.
+  repeated string recipe = 3;
+  bool is_phony = 4;
+  bool is_double_colon = 5;
+  // True when the target name contains "%" (a static pattern rule, e.g. "%.o: %.c").
+  bool is_pattern_rule = 6;
+  int32 line_number = 7;
+  // "## " trailing help text on the rule line, or a directly-preceding
+  // comment block — the common self-documenting-Makefile convention.
+  repeated string help_comments = 8;
+}
+
+// One variable assignment.
+message Variable {
+  string name = 1;
+  // Raw, unexpanded right-hand side.
+  string value = 2;
+  // One of "=", ":=", "::=", ":::=", "?=", "+=", "!=".
+  string operator = 3;
+  int32 line_number = 4;
+}
+
+// One comment line (full-line, or a trailing "# ..."/"## ..." on a code line).
+message Comment {
+  string text = 1;
+  int32 line_number = 2;
+  // True for the many-projects "## " self-documentation convention.
+  bool is_help_marker = 3;
+}
+
+// One directive line reported verbatim and never evaluated: conditionals
+// (ifeq/ifneq/ifdef/ifndef/else/endif), define/endef blocks, include
+// directives, vpath, export/unexport, override.
+message Directive {
+  string directive_type = 1;
+  // Everything after the directive keyword, raw and unexpanded.
+  string arguments = 2;
+  int32 line_number = 3;
+}
+
+// A structural problem found while parsing, with a 1-based source line.
+message ValidationIssue {
+  // "error" or "warning".
+  string severity = 1;
+  string message = 2;
+  int32 line_number = 3;
+}
+
+// Full structured parse of a Makefile — the general-purpose result every
+// other node in this package is a specialized view of.
+message ParsedMakefile {
+  repeated Target targets = 1;
+  repeated Variable variables = 2;
+  repeated Comment comments = 3;
+  repeated Directive directives = 4;
+  repeated string phony_targets = 5;
+  string default_goal = 6;
+  bool default_goal_found = 7;
+  repeated ValidationIssue issues = 8;
+  int32 line_count = 9;
+}
+
+message TargetList {
+  repeated Target targets = 1;
+}
+
+message TargetPrerequisites {
+  string target_name = 1;
+  repeated string prerequisites = 2;
+  bool found = 3;
+}
+
+message TargetRecipe {
+  string target_name = 1;
+  repeated string recipe = 2;
+  bool found = 3;
+}
+
+message VariableList {
+  repeated Variable variables = 1;
+}
+
+// Result of expanding a variable's simple $(VAR)/${VAR} references against
+// the file's own other assignments — pure, static, no shell/environment.
+message ExpandedVariable {
+  string name = 1;
+  bool found = 2;
+  string original_value = 3;
+  string expanded_value = 4;
+  // True iff every $(VAR)/${VAR} reference resolved to a known variable.
+  bool fully_resolved = 5;
+  // Referenced variable names that had no assignment in the file.
+  repeated string unresolved_references = 6;
+  bool cycle_detected = 7;
+  // The variable names forming the cycle, in reference order, e.g. [A, B, A].
+  repeated string cycle_path = 8;
+}
+
+message PhonyTargetList {
+  repeated string phony_targets = 1;
+}
+
+message DefaultGoal {
+  string target_name = 1;
+  bool found = 2;
+  // "DEFAULT_GOAL variable" or "first target".
+  string source = 3;
+}
+
+message PatternRuleList {
+  repeated Target pattern_rules = 1;
+}
+
+message DoubleColonRuleList {
+  repeated Target double_colon_rules = 1;
+}
+
+// One node's outgoing edges: the prerequisites of `target` that are
+// themselves targets defined in the same file (file-only prerequisites are
+// excluded — they have no further build steps to sequence).
+message DependencyEdge {
+  string target = 1;
+  repeated string depends_on_targets = 2;
+}
+
+message DependencyGraph {
+  repeated DependencyEdge edges = 1;
+  // A valid build order (dependencies before dependents), topologically
+  // sorted; empty when has_cycle is true.
+  repeated string build_order = 2;
+  bool has_cycle = 3;
+  // The targets participating in a detected cycle, when has_cycle is true.
+  repeated string cycle_targets = 4;
+}
+
+message IncludeDirective {
+  // The raw, unexpanded path expression(s) after "include"/"-include"/"sinclude".
+  string path_expr = 1;
+  // True for "-include"/"sinclude" (missing files are silently ignored).
+  bool optional = 2;
+  int32 line_number = 3;
+}
+
+message IncludeList {
+  repeated IncludeDirective includes = 1;
+}
+
+message TargetHelp {
+  string target_name = 1;
+  bool found = 2;
+  repeated string help_text = 3;
+}
+
+message TargetDoc {
+  string target_name = 1;
+  repeated string help_text = 2;
+}
+
+message TargetHelpList {
+  repeated TargetDoc docs = 1;
+}
+
+message MakefileSummary {
+  int32 target_count = 1;
+  int32 variable_count = 2;
+  int32 phony_count = 3;
+  int32 pattern_rule_count = 4;
+  int32 double_colon_count = 5;
+  int32 comment_count = 6;
+  int32 directive_count = 7;
+  int32 line_count = 8;
+}
+
+message ValidationResult {
+  bool valid = 1;
+  repeated ValidationIssue issues = 2;
+}
