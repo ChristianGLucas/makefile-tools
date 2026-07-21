@@ -203,6 +203,7 @@ func preprocess(rawLines []string) (sanitized []string, comments []Comment, dire
 	inDefine := false
 	defineStartLine := 0
 	defineName := ""
+	defineDirectiveType := "define"
 
 	i := 0
 	for i < n {
@@ -226,7 +227,7 @@ func preprocess(rawLines []string) (sanitized []string, comments []Comment, dire
 		if inDefine {
 			sanitized[i] = ""
 			if trimmed == "endef" || strings.HasPrefix(trimmed, "endef ") {
-				directives = append(directives, Directive{Type: "define", Arguments: defineName, LineNumber: defineStartLine})
+				directives = append(directives, Directive{Type: defineDirectiveType, Arguments: defineName, LineNumber: defineStartLine})
 				inDefine = false
 			}
 			i++
@@ -258,10 +259,23 @@ func preprocess(rawLines []string) (sanitized []string, comments []Comment, dire
 		if m := reDirective.FindStringSubmatch(strings.TrimSpace(joined)); m != nil {
 			directiveType := m[1]
 			args := strings.TrimSpace(m[2])
-			if directiveType == "define" {
+			// "export define VAR ... endef" / "override define VAR ... endef"
+			// are real GNU Make constructs (a define block whose value gets
+			// exported/overridden) — the "export"/"override" keyword can
+			// prefix "define" too, not just a plain assignment. Route these
+			// into the same inDefine handling as a bare "define" line so the
+			// body's literal text is never mistaken for real content.
+			isDefineOpener := directiveType == "define" ||
+				((directiveType == "export" || directiveType == "override") && (args == "define" || strings.HasPrefix(args, "define ")))
+			if isDefineOpener {
 				inDefine = true
 				defineStartLine = startLine
-				defineName = args
+				defineDirectiveType = directiveType
+				if directiveType == "define" {
+					defineName = args
+				} else {
+					defineName = strings.TrimSpace(strings.TrimPrefix(args, "define"))
+				}
 				for k := 0; k < consumed; k++ {
 					sanitized[i+k] = ""
 				}

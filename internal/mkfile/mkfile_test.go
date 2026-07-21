@@ -391,6 +391,37 @@ func TestParse_ExportBareNameList_StaysDirectiveOnly(t *testing.T) {
 	}
 }
 
+// TestParse_ExportDefine_DoesNotFabricateContent is a regression test for a
+// MAJOR finding from a follow-up independent review: "export define VAR ...
+// endef" / "override define VAR ... endef" (a define block whose value is
+// exported/overridden — a real GNU Make construct) were not recognized as
+// define openers, so the body's literal text lines were parsed as real
+// top-level content, fabricating a target and corrupting the default goal.
+func TestParse_ExportDefine_DoesNotFabricateContent(t *testing.T) {
+	for _, directiveType := range []string{"export", "override"} {
+		content := directiveType + " define GREETING\nhello world\nfoo: bar\nendef\n\nall:\n\t@echo hi\n"
+		p, err := Parse(content)
+		if err != nil {
+			t.Fatalf("[%s] unexpected error: %v", directiveType, err)
+		}
+		if len(p.Targets) != 1 || p.Targets[0].Name != "all" {
+			t.Fatalf("[%s] expected only the 'all' target outside the define block, got %+v", directiveType, targetNames(p.Targets))
+		}
+		if !p.DefaultGoalFound || p.DefaultGoal != "all" {
+			t.Errorf("[%s] DefaultGoal = %q found=%v, want all/true", directiveType, p.DefaultGoal, p.DefaultGoalFound)
+		}
+		found := false
+		for _, d := range p.Directives {
+			if d.Type == directiveType && strings.Contains(d.Arguments, "GREETING") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("[%s] expected a %q directive naming GREETING, got %+v", directiveType, directiveType, p.Directives)
+		}
+	}
+}
+
 func findVariableForTest(vars []Variable, name string) (Variable, bool) {
 	for _, v := range vars {
 		if v.Name == name {
