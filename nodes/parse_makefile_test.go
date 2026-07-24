@@ -2,6 +2,7 @@ package nodes_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	gen "christiangeorgelucas/makefile-tools/gen"
@@ -47,17 +48,22 @@ func TestParseMakefile_EmptyInput(t *testing.T) {
 	}
 }
 
-func TestParseMakefile_OversizedInput_ReturnsError(t *testing.T) {
+func TestParseMakefile_LargeInput_NoCrash(t *testing.T) {
 	ctx := context.Background()
 	ax := newTestContext(t)
 
-	huge := make([]byte, 3*1024*1024)
-	for i := range huge {
-		huge[i] = 'x'
+	// Realistically line-structured multi-MB input (see the equivalent note
+	// in internal/mkfile's TestParse_LargeContent_NoCrash).
+	var b strings.Builder
+	for i := 0; i < 130000; i++ {
+		b.WriteString("target_line:\n\tcommand\n")
 	}
 
-	_, err := nodes.ParseMakefile(ctx, ax, &gen.MakefileInput{Content: string(huge)})
-	if err == nil {
-		t.Fatal("expected an error for oversized input, got nil")
+	got, err := nodes.ParseMakefile(ctx, ax, &gen.MakefileInput{Content: b.String()})
+	if err != nil {
+		t.Fatalf("unexpected error for large input: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected a non-nil result for large input")
 	}
 }

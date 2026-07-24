@@ -1,24 +1,15 @@
 package nodes
 
 import (
-	"errors"
-	"fmt"
-
 	gen "christiangeorgelucas/makefile-tools/gen"
 	"christiangeorgelucas/makefile-tools/internal/mkfile"
 )
 
-// checkBounds turns mkfile's ErrTooLarge into a plain Go error suitable for
-// a node to return directly (a hard input-bound violation, not a parse
-// ambiguity). Any other error is passed through unchanged.
+// checkBounds passes mkfile.Parse's error through unchanged. Parse itself no
+// longer enforces any input-size bound (the platform owns that), so this is
+// currently always nil, but nodes keep calling it so a future internal-parser
+// failure still surfaces as a structured error rather than silently ignored.
 func checkBounds(err error) error {
-	if err == nil {
-		return nil
-	}
-	var tooLarge mkfile.ErrTooLarge
-	if errors.As(err, &tooLarge) {
-		return fmt.Errorf("input rejected: %s", tooLarge.Error())
-	}
 	return err
 }
 

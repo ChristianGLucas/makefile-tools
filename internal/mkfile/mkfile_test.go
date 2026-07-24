@@ -527,25 +527,26 @@ func TestParse_DuplicateSingleColonTarget_ReportsWarning(t *testing.T) {
 	}
 }
 
-func TestParse_TooLarge_ReturnsErrTooLarge(t *testing.T) {
-	huge := strings.Repeat("x", MaxContentBytes+1)
+func TestParse_LargeContent_NoCrash(t *testing.T) {
+	// Realistically line-structured (not one pathological giant line — the
+	// underlying checkmake parser's per-line cost is fine; its behavior on a
+	// single multi-MB line is a separate, already-noted concern) multi-MB
+	// input, well past the old 2 MiB cap.
+	huge := strings.Repeat("target_line:\n\tcommand\n", 100000) // ~2.3 MB
 	_, err := Parse(huge)
-	if err == nil {
-		t.Fatal("expected an error for oversized content")
-	}
-	if _, ok := err.(ErrTooLarge); !ok {
-		t.Errorf("expected ErrTooLarge, got %T: %v", err, err)
+	if err != nil {
+		t.Fatalf("unexpected error for large content: %v", err)
 	}
 }
 
-func TestParse_TooManyLines_ReturnsErrTooLarge(t *testing.T) {
-	huge := strings.Repeat("a:\n", MaxLines+10)
-	_, err := Parse(huge)
-	if err == nil {
-		t.Fatal("expected an error for too many lines")
+func TestParse_ManyLines_NoCrash(t *testing.T) {
+	huge := strings.Repeat("a:\n", 50010)
+	p, err := Parse(huge)
+	if err != nil {
+		t.Fatalf("unexpected error for many lines: %v", err)
 	}
-	if _, ok := err.(ErrTooLarge); !ok {
-		t.Errorf("expected ErrTooLarge, got %T: %v", err, err)
+	if p.LineCount == 0 {
+		t.Errorf("expected a non-zero line count, got %+v", p)
 	}
 }
 

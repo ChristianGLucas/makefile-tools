@@ -27,22 +27,11 @@ import (
 	ckparser "github.com/checkmake/checkmake/parser"
 )
 
-// Input-surface bounds. Enforced before any parsing work happens.
-const (
-	MaxContentBytes = 2 * 1024 * 1024 // 2 MiB
-	MaxLines        = 50000
-	// MaxExpandDepth bounds variable-expansion recursion even for long
-	// non-cyclic reference chains, independent of cycle detection.
-	MaxExpandDepth = 64
-)
-
-// ErrTooLarge is returned when the caller-supplied content exceeds the
-// bounds above. Nodes translate this into a structured, non-crashing result.
-type ErrTooLarge struct {
-	Reason string
-}
-
-func (e ErrTooLarge) Error() string { return e.Reason }
+// MaxExpandDepth bounds variable-expansion recursion (a genuine Go call
+// stack, not merely a cost concern) even for long non-cyclic reference
+// chains, independent of cycle detection — a stack-overflow guard, not a
+// payload/DoS bound.
+const MaxExpandDepth = 64
 
 // ---- result types (node code maps these 1:1 onto proto messages) ----
 
@@ -120,20 +109,12 @@ var (
 
 // Parse runs the full pipeline over raw Makefile text and returns a
 // structured, best-effort result. It never panics and never returns a nil
-// Parsed — a malformed or oversized input comes back as issues, not an error
-// from this function (callers that want a hard bounds error can check for
-// ErrTooLarge on the returned error).
+// Parsed — a malformed input comes back as issues, not an error from this
+// function.
 func Parse(content string) (Parsed, error) {
 	var result Parsed
 
-	if len(content) > MaxContentBytes {
-		return result, ErrTooLarge{Reason: fmt.Sprintf("content is %d bytes, exceeds the %d byte limit", len(content), MaxContentBytes)}
-	}
-
 	rawLines := splitLines(content)
-	if len(rawLines) > MaxLines {
-		return result, ErrTooLarge{Reason: fmt.Sprintf("content has %d lines, exceeds the %d line limit", len(rawLines), MaxLines)}
-	}
 	result.LineCount = len(rawLines)
 
 	sanitized, comments, directives, defaultGoalVar, preIssues := preprocess(rawLines)
